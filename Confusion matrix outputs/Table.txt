@@ -1,0 +1,10 @@
+Confusion matrix _table/visualizations/classification_report.txt
+
+              precision    recall  f1-score   support
+
+  Non-Pocket       0.90      0.93      0.91       241
+      Pocket       0.93      0.90      0.92       259
+
+    accuracy                           0.91       500
+   macro avg       0.91      0.91      0.91       500
+weighted avg       0.91      0.91      0.91       500

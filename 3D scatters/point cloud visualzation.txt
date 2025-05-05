@@ -1,0 +1,524 @@
+"""
+3D Point Cloud Visualization for Forklift Pallet Detection
+=========================================================
+
+This script provides 3D visualizations of the point cloud data used in the
+autonomous forklift system, including:
+1. Raw point cloud visualization
+2. Segmented pallet pockets
+3. DBSCAN clustering results
+4. ICP alignment visualization
+"""
+
+import numpy as np
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+import os
+from matplotlib.colors import ListedColormap
+import random
+
+# Create output directory
+os.makedirs('output/point_cloud', exist_ok=True)
+
+# Set random seed for reproducibility
+np.random.seed(42)
+random.seed(42)
+
+def generate_simulated_point_cloud(num_points=5000, with_noise=True):
+    """
+    Generate a simulated point cloud of a pallet with pockets.
+    
+    Args:
+        num_points: Number of points in the point cloud
+        with_noise: Whether to add noise to the point cloud
+        
+    Returns:
+        numpy array of shape (num_points, 3)
+    """
+    # Define pallet dimensions (in meters)
+    pallet_length = 1.2
+    pallet_width = 0.8
+    pallet_height = 0.15
+    
+    # Generate points for the main pallet surface
+    num_surface_points = int(num_points * 0.7)
+    surface_points = np.zeros((num_surface_points, 3))
+    surface_points[:, 0] = np.random.uniform(-pallet_length/2, pallet_length/2, num_surface_points)
+    surface_points[:, 1] = np.random.uniform(-pallet_width/2, pallet_width/2, num_surface_points)
+    surface_points[:, 2] = pallet_height + np.random.normal(0, 0.005, num_surface_points)  # Small z variation
+    
+    # Generate points for the pallet base
+    num_base_points = int(num_points * 0.1)
+    base_points = np.zeros((num_base_points, 3))
+    base_points[:, 0] = np.random.uniform(-pallet_length/2, pallet_length/2, num_base_points)
+    base_points[:, 1] = np.random.uniform(-pallet_width/2, pallet_width/2, num_base_points)
+    base_points[:, 2] = np.random.uniform(0, 0.05, num_base_points)  # Base height
+    
+    # Generate points for the left pocket
+    num_left_pocket_points = int(num_points * 0.1)
+    left_pocket_points = np.zeros((num_left_pocket_points, 3))
+    left_pocket_points[:, 0] = np.random.uniform(-0.4, -0.2, num_left_pocket_points)
+    left_pocket_points[:, 1] = np.random.uniform(-0.1, 0.1, num_left_pocket_points)
+    left_pocket_points[:, 2] = np.random.uniform(0.05, 0.14, num_left_pocket_points)
+    
+    # Generate points for the right pocket
+    num_right_pocket_points = int(num_points * 0.1)
+    right_pocket_points = np.zeros((num_right_pocket_points, 3))
+    right_pocket_points[:, 0] = np.random.uniform(0.2, 0.4, num_right_pocket_points)
+    right_pocket_points[:, 1] = np.random.uniform(-0.1, 0.1, num_right_pocket_points)
+    right_pocket_points[:, 2] = np.random.uniform(0.05, 0.14, num_right_pocket_points)
+    
+    # Combine all points
+    point_cloud = np.vstack((surface_points, base_points, left_pocket_points, right_pocket_points))
+    
+    # Add some noise if requested
+    if with_noise:
+        noise = np.random.normal(0, 0.01, point_cloud.shape)
+        point_cloud += noise
+    
+    return point_cloud
+
+def simulate_dbscan_clustering(point_cloud, eps=0.05, min_samples=10):
+    """
+    Simulate DBSCAN clustering results for visualization.
+    
+    In a real implementation, this would use actual DBSCAN from sklearn.
+    For visualization purposes, we'll use proximity to known pocket locations.
+    
+    Args:
+        point_cloud: numpy array of shape (n, 3)
+        eps: DBSCAN epsilon parameter
+        min_samples: DBSCAN min_samples parameter
+        
+    Returns:
+        labels: cluster labels for each point
+    """
+    # Initialize all points as noise (-1)
+    labels = np.ones(point_cloud.shape[0], dtype=int) * -1
+    
+    # Identify points near the left pocket (cluster 0)
+    left_pocket_center = np.array([-0.3, 0.0, 0.1])
+    left_pocket_mask = np.sum((point_cloud - left_pocket_center)**2, axis=1) < 0.04
+    labels[left_pocket_mask] = 0
+    
+    # Identify points near the right pocket (cluster 1)
+    right_pocket_center = np.array([0.3, 0.0, 0.1])
+    right_pocket_mask = np.sum((point_cloud - right_pocket_center)**2, axis=1) < 0.04
+    labels[right_pocket_mask] = 1
+    
+    # Identify points on the pallet surface (cluster 2)
+    surface_mask = (point_cloud[:, 2] > 0.14) & (point_cloud[:, 2] < 0.16)
+    labels[surface_mask] = 2
+    
+    # Identify points on the pallet base (cluster 3)
+    base_mask = (point_cloud[:, 2] < 0.05) & (~left_pocket_mask) & (~right_pocket_mask)
+    labels[base_mask] = 3
+    
+    return labels
+
+def simulate_icp_alignment(point_cloud, transformation_noise=0.02):
+    """
+    Simulate ICP alignment results for visualization.
+    
+    In a real implementation, this would use actual ICP from Open3D.
+    For visualization, we create a synthetic transformation.
+    
+    Args:
+        point_cloud: numpy array of shape (n, 3)
+        transformation_noise: Amount of noise in the transformation
+        
+    Returns:
+        aligned_cloud: transformed point cloud
+        transformation: 4x4 transformation matrix
+    """
+    # Create a small random transformation matrix
+    translation = np.random.normal(0, transformation_noise, 3)
+    angle = np.random.normal(0, transformation_noise * 10)  # in degrees
+    
+    # Convert angle to radians
+    angle_rad = np.deg2rad(angle)
+    
+    # Create rotation matrix (simple rotation around z-axis)
+    rotation = np.array([
+        [np.cos(angle_rad), -np.sin(angle_rad), 0],
+        [np.sin(angle_rad), np.cos(angle_rad), 0],
+        [0, 0, 1]
+    ])
+    
+    # Create 4x4 transformation matrix
+    transformation = np.eye(4)
+    transformation[:3, :3] = rotation
+    transformation[:3, 3] = translation
+    
+    # Apply transformation to point cloud
+    homogeneous_points = np.hstack((point_cloud, np.ones((point_cloud.shape[0], 1))))
+    transformed_homogeneous = np.dot(homogeneous_points, transformation.T)
+    aligned_cloud = transformed_homogeneous[:, :3]
+    
+    return aligned_cloud, transformation
+
+def visualize_raw_point_cloud(point_cloud):
+    """
+    Create a 3D scatter plot of the raw point cloud.
+    
+    Args:
+        point_cloud: numpy array of shape (n, 3)
+    """
+    fig = plt.figure(figsize=(10, 8))
+    ax = fig.add_subplot(111, projection='3d')
+    
+    # Color based on height (z-coordinate)
+    colors = point_cloud[:, 2]
+    
+    scatter = ax.scatter(
+        point_cloud[:, 0], point_cloud[:, 1], point_cloud[:, 2],
+        c=colors, cmap='viridis', s=2, alpha=0.7
+    )
+    
+    # Add a color bar
+    cbar = plt.colorbar(scatter, ax=ax, pad=0.1)
+    cbar.set_label('Height (m)')
+    
+    # Set labels and title
+    ax.set_xlabel('X (m)')
+    ax.set_ylabel('Y (m)')
+    ax.set_zlabel('Z (m)')
+    ax.set_title('Raw Point Cloud Data')
+    
+    # Equal aspect ratio
+    ax.set_box_aspect([1, 1, 0.3])  # Adjust the z-scale
+    
+    # Add grid lines
+    ax.grid(True)
+    
+    # Save the figure
+    plt.tight_layout()
+    plt.savefig('output/point_cloud/raw_point_cloud.png', dpi=300)
+    print("Raw point cloud visualization saved to output/point_cloud/raw_point_cloud.png")
+
+def visualize_dbscan_clustering(point_cloud, labels):
+    """
+    Create a 3D scatter plot showing DBSCAN clustering results.
+    
+    Args:
+        point_cloud: numpy array of shape (n, 3)
+        labels: cluster labels for each point
+    """
+    fig = plt.figure(figsize=(12, 10))
+    ax = fig.add_subplot(111, projection='3d')
+    
+    # Create a colormap for different clusters
+    # Special color for noise points (-1)
+    unique_labels = np.unique(labels)
+    n_clusters = len(unique_labels)
+    
+    # Map labels to colors
+    cmap = plt.cm.get_cmap('tab10', max(3, n_clusters))
+    colors = []
+    
+    for label in labels:
+        if label == -1:
+            # Noise points in gray
+            colors.append([0.7, 0.7, 0.7, 0.3])
+        else:
+            # Get color from colormap
+            rgba = list(cmap(label % 10))
+            rgba[3] = 0.8  # Set alpha
+            colors.append(rgba)
+    
+    # Plot all points
+    scatter = ax.scatter(
+        point_cloud[:, 0], point_cloud[:, 1], point_cloud[:, 2],
+        c=colors, s=4
+    )
+    
+    # Create legend entries for each cluster
+    legend_elements = []
+    
+    # Add legend entry for noise points
+    if -1 in unique_labels:
+        legend_elements.append(
+            plt.Line2D([0], [0], marker='o', color='w', label='Noise',
+                      markerfacecolor=[0.7, 0.7, 0.7, 0.5], markersize=10)
+        )
+    
+    # Add legend entries for clusters
+    for label in sorted(unique_labels):
+        if label != -1:
+            if label == 0:
+                cluster_name = "Left Pocket"
+            elif label == 1:
+                cluster_name = "Right Pocket"
+            elif label == 2:
+                cluster_name = "Surface"
+            elif label == 3:
+                cluster_name = "Base"
+            else:
+                cluster_name = f"Cluster {label}"
+                
+            legend_elements.append(
+                plt.Line2D([0], [0], marker='o', color='w', label=cluster_name,
+                          markerfacecolor=cmap(label % 10), markersize=10)
+            )
+    
+    # Add the legend
+    ax.legend(handles=legend_elements, loc='upper right')
+    
+    # Set labels and title
+    ax.set_xlabel('X (m)')
+    ax.set_ylabel('Y (m)')
+    ax.set_zlabel('Z (m)')
+    ax.set_title('DBSCAN Clustering Results')
+    
+    # Equal aspect ratio
+    ax.set_box_aspect([1, 1, 0.3])  # Adjust the z-scale
+    
+    # Add grid lines
+    ax.grid(True)
+    
+    # Save the figure
+    plt.tight_layout()
+    plt.savefig('output/point_cloud/dbscan_clustering.png', dpi=300)
+    print("DBSCAN clustering visualization saved to output/point_cloud/dbscan_clustering.png")
+
+def visualize_segmented_pockets(point_cloud, labels):
+    """
+    Create a 3D scatter plot highlighting the segmented pallet pockets.
+    
+    Args:
+        point_cloud: numpy array of shape (n, 3)
+        labels: cluster labels for each point
+    """
+    fig = plt.figure(figsize=(12, 10))
+    ax = fig.add_subplot(111, projection='3d')
+    
+    # Set different colors for pockets and other points
+    colors = []
+    sizes = []
+    
+    for label in labels:
+        if label == 0 or label == 1:  # Pocket clusters
+            colors.append([1.0, 0.0, 0.0, 0.9])  # Red for pockets
+            sizes.append(10)
+        else:
+            colors.append([0.7, 0.7, 0.7, 0.1])  # Transparent gray for others
+            sizes.append(1)
+    
+    # Plot all points
+    scatter = ax.scatter(
+        point_cloud[:, 0], point_cloud[:, 1], point_cloud[:, 2],
+        c=colors, s=sizes
+    )
+    
+    # Create legend
+    legend_elements = [
+        plt.Line2D([0], [0], marker='o', color='w', label='Pallet Pockets',
+                  markerfacecolor=[1.0, 0.0, 0.0, 0.9], markersize=10),
+        plt.Line2D([0], [0], marker='o', color='w', label='Other Points',
+                  markerfacecolor=[0.7, 0.7, 0.7, 0.3], markersize=5)
+    ]
+    
+    # Add the legend
+    ax.legend(handles=legend_elements, loc='upper right')
+    
+    # Set labels and title
+    ax.set_xlabel('X (m)')
+    ax.set_ylabel('Y (m)')
+    ax.set_zlabel('Z (m)')
+    ax.set_title('Segmented Pallet Pockets')
+    
+    # Equal aspect ratio
+    ax.set_box_aspect([1, 1, 0.3])  # Adjust the z-scale
+    
+    # Add grid lines
+    ax.grid(True)
+    
+    # Save the figure
+    plt.tight_layout()
+    plt.savefig('output/point_cloud/segmented_pockets.png', dpi=300)
+    print("Segmented pockets visualization saved to output/point_cloud/segmented_pockets.png")
+
+def visualize_icp_alignment(point_cloud, aligned_cloud, transformation):
+    """
+    Create a 3D scatter plot showing the original and aligned point clouds.
+    
+    Args:
+        point_cloud: original point cloud (numpy array of shape (n, 3))
+        aligned_cloud: transformed point cloud (numpy array of shape (n, 3))
+        transformation: 4x4 transformation matrix
+    """
+    fig = plt.figure(figsize=(12, 10))
+    ax = fig.add_subplot(111, projection='3d')
+    
+    # Plot original point cloud in blue
+    ax.scatter(
+        point_cloud[:, 0], point_cloud[:, 1], point_cloud[:, 2],
+        c='blue', s=2, alpha=0.3, label='Original'
+    )
+    
+    # Plot aligned point cloud in red
+    ax.scatter(
+        aligned_cloud[:, 0], aligned_cloud[:, 1], aligned_cloud[:, 2],
+        c='red', s=2, alpha=0.5, label='Aligned'
+    )
+    
+    # Set labels and title
+    ax.set_xlabel('X (m)')
+    ax.set_ylabel('Y (m)')
+    ax.set_zlabel('Z (m)')
+    ax.set_title('ICP Alignment Result')
+    
+    # Add transformation matrix as text
+    transformation_text = (
+        f"Transformation Matrix:\n"
+        f"[{transformation[0,0]:.2f}, {transformation[0,1]:.2f}, {transformation[0,2]:.2f}, {transformation[0,3]:.2f}]\n"
+        f"[{transformation[1,0]:.2f}, {transformation[1,1]:.2f}, {transformation[1,2]:.2f}, {transformation[1,3]:.2f}]\n"
+        f"[{transformation[2,0]:.2f}, {transformation[2,1]:.2f}, {transformation[2,2]:.2f}, {transformation[2,3]:.2f}]\n"
+        f"[{transformation[3,0]:.2f}, {transformation[3,1]:.2f}, {transformation[3,2]:.2f}, {transformation[3,3]:.2f}]"
+    )
+    ax.text2D(0.02, 0.02, transformation_text, transform=ax.transAxes, fontsize=9, 
+             verticalalignment='bottom', bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))
+    
+    # Add legend
+    ax.legend()
+    
+    # Equal aspect ratio
+    ax.set_box_aspect([1, 1, 0.3])  # Adjust the z-scale
+    
+    # Add grid lines
+    ax.grid(True)
+    
+    # Save the figure
+    plt.tight_layout()
+    plt.savefig('output/point_cloud/icp_alignment.png', dpi=300)
+    print("ICP alignment visualization saved to output/point_cloud/icp_alignment.png")
+
+def create_point_cloud_visualizations():
+    """Create and save all point cloud visualizations."""
+    # Generate simulated point cloud
+    point_cloud = generate_simulated_point_cloud(num_points=8000)
+    
+    # Visualize raw point cloud
+    visualize_raw_point_cloud(point_cloud)
+    
+    # Simulate DBSCAN clustering
+    labels = simulate_dbscan_clustering(point_cloud)
+    
+    # Visualize DBSCAN clustering results
+    visualize_dbscan_clustering(point_cloud, labels)
+    
+    # Visualize segmented pallet pockets
+    visualize_segmented_pockets(point_cloud, labels)
+    
+    # Simulate ICP alignment
+    aligned_cloud, transformation = simulate_icp_alignment(point_cloud)
+    
+    # Visualize ICP alignment results
+    visualize_icp_alignment(point_cloud, aligned_cloud, transformation)
+    
+    # Create a combined visualization for Streamlit app
+    create_combined_visualization(point_cloud, labels, aligned_cloud, transformation)
+
+def create_combined_visualization(point_cloud, labels, aligned_cloud, transformation):
+    """
+    Create a combined visualization with all point cloud aspects.
+    
+    Args:
+        point_cloud: numpy array of shape (n, 3)
+        labels: cluster labels for each point
+        aligned_cloud: transformed point cloud
+        transformation: 4x4 transformation matrix
+    """
+    fig = plt.figure(figsize=(20, 15))
+    
+    # 1. Raw point cloud
+    ax1 = fig.add_subplot(221, projection='3d')
+    colors = point_cloud[:, 2]
+    scatter1 = ax1.scatter(
+        point_cloud[:, 0], point_cloud[:, 1], point_cloud[:, 2],
+        c=colors, cmap='viridis', s=2, alpha=0.7
+    )
+    ax1.set_xlabel('X (m)')
+    ax1.set_ylabel('Y (m)')
+    ax1.set_zlabel('Z (m)')
+    ax1.set_title('Raw Point Cloud Data')
+    ax1.set_box_aspect([1, 1, 0.3])
+    ax1.grid(True)
+    
+    # 2. DBSCAN clustering
+    ax2 = fig.add_subplot(222, projection='3d')
+    cmap = plt.cm.get_cmap('tab10', 5)
+    colors2 = []
+    
+    for label in labels:
+        if label == -1:
+            colors2.append([0.7, 0.7, 0.7, 0.3])
+        else:
+            rgba = list(cmap(label % 10))
+            rgba[3] = 0.8
+            colors2.append(rgba)
+    
+    scatter2 = ax2.scatter(
+        point_cloud[:, 0], point_cloud[:, 1], point_cloud[:, 2],
+        c=colors2, s=3
+    )
+    ax2.set_xlabel('X (m)')
+    ax2.set_ylabel('Y (m)')
+    ax2.set_zlabel('Z (m)')
+    ax2.set_title('DBSCAN Clustering Results')
+    ax2.set_box_aspect([1, 1, 0.3])
+    ax2.grid(True)
+    
+    # 3. Segmented pockets
+    ax3 = fig.add_subplot(223, projection='3d')
+    colors3 = []
+    sizes3 = []
+    
+    for label in labels:
+        if label == 0 or label == 1:
+            colors3.append([1.0, 0.0, 0.0, 0.9])
+            sizes3.append(10)
+        else:
+            colors3.append([0.7, 0.7, 0.7, 0.1])
+            sizes3.append(1)
+    
+    scatter3 = ax3.scatter(
+        point_cloud[:, 0], point_cloud[:, 1], point_cloud[:, 2],
+        c=colors3, s=sizes3
+    )
+    ax3.set_xlabel('X (m)')
+    ax3.set_ylabel('Y (m)')
+    ax3.set_zlabel('Z (m)')
+    ax3.set_title('Segmented Pallet Pockets')
+    ax3.set_box_aspect([1, 1, 0.3])
+    ax3.grid(True)
+    
+    # 4. ICP alignment
+    ax4 = fig.add_subplot(224, projection='3d')
+    ax4.scatter(
+        point_cloud[:, 0], point_cloud[:, 1], point_cloud[:, 2],
+        c='blue', s=2, alpha=0.3, label='Original'
+    )
+    ax4.scatter(
+        aligned_cloud[:, 0], aligned_cloud[:, 1], aligned_cloud[:, 2],
+        c='red', s=2, alpha=0.5, label='Aligned'
+    )
+    ax4.set_xlabel('X (m)')
+    ax4.set_ylabel('Y (m)')
+    ax4.set_zlabel('Z (m)')
+    ax4.set_title('ICP Alignment Result')
+    ax4.legend()
+    ax4.set_box_aspect([1, 1, 0.3])
+    ax4.grid(True)
+    
+    # Main title
+    fig.suptitle('3D Point Cloud Analysis for Autonomous Forklift Pallet Detection', fontsize=16)
+    
+    # Save the figure
+    plt.tight_layout(rect=[0, 0, 1, 0.97])  # Adjust for suptitle
+    plt.savefig('output/point_cloud/combined_visualization.png', dpi=300)
+    print("Combined visualization saved to output/point_cloud/combined_visualization.png")
+
+if __name__ == "__main__":
+    create_point_cloud_visualizations()
+    print("All point cloud visualizations created successfully!")
